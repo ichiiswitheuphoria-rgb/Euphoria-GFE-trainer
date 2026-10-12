@@ -199,14 +199,26 @@ HOW TO ACT
 
   // ---------- AI call ----------
   async function ai(system, msgs, wantJson = false, temperature = 0.9) {
-    const res = await fetch(C.WORKER_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ system, messages: msgs, wantJson, temperature }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.error) throw new Error(data.error || `Error ${res.status}`);
-    return data.text;
+    // Quietly retries twice when the free AI is busy before showing an error.
+    let lastErr;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 4000 * attempt));
+      try {
+        const res = await fetch(C.WORKER_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ system, messages: msgs, wantJson, temperature }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && !data.error) return data.text;
+        lastErr = new Error(data.error || `Error ${res.status}`);
+        if (![429, 502, 503].includes(res.status)) throw lastErr; // not a "busy" error
+      } catch (e) {
+        lastErr = e;
+        if (!/busy|reach|fetch|network/i.test(e.message)) throw e;
+      }
+    }
+    throw lastErr;
   }
 
   function toApiMessages() {
