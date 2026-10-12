@@ -206,7 +206,8 @@ HOW TO ACT
       try {
         const res = await fetch(C.WORKER_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          // text/plain keeps this a "simple" request so Google Apps Script accepts it
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
           body: JSON.stringify({ system, messages: msgs, wantJson, temperature }),
         });
         const data = await res.json().catch(() => ({}));
