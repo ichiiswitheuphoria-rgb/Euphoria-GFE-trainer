@@ -13,7 +13,7 @@
 const CONFIG = {
 
   // Paste your Cloudflare Worker link here (step 3 of the setup).
-  WORKER_URL: "https://gfe-trainer.ichiiswitheuphoria.workers.dev",
+  WORKER_URL: "https://script.google.com/macros/s/AKfycbwlCEsagGfKVooPXHJejLl6cv6wabWi8GRZ-FLbAycOayGGTwIcodlM2i37FQ-3QO1z/exec",
 
   // Minimum number of messages the chatter has to send before they can end
   // the chat and get scored.
