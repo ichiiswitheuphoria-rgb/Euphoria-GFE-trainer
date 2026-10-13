@@ -109,7 +109,7 @@
         <li>Send as many lines as you want in a row. He replies once you stop typing for a few seconds.</li>
         <li><b>Tap any of his messages</b> to reply to that exact message.</li>
         <li>No selling, no PPVs. This is pure GFE practice.</li>
-        <li>The chat ends by itself after <span id="turnsInfo">12</span> turns and you get your score.</li>
+        <li>You have <b><span id="minutesInfo">5</span> minutes</b>. Send at least <b><span id="minMsgsInfo">10</span> messages</b> to get a score.</li>
       </ul>
     </div>
     <div>
@@ -159,8 +159,9 @@
   const C = window.CONFIG || CONFIG;
   // Defaults so older config.js files keep working.
   const S = {
-    TURNS: C.TURNS || C.MIN_MESSAGES || 12,
-    MIN_END: C.MIN_TURNS_TO_END_EARLY || 6,
+    MINUTES: C.CHAT_MINUTES || 5,
+    MIN_MSGS: C.MIN_MESSAGES_TO_SCORE || C.MIN_MESSAGES || 10,
+    SAVE: C.SAVE_RESULTS !== false,
     STACK: (C.STACK_WAIT_SECONDS ?? 6) * 1000,
     STACK_MAX: (C.MAX_STACK_WAIT_SECONDS ?? 30) * 1000,
     TYPE_MIN: (C.TYPING_SECONDS_MIN ?? 2) * 1000,
@@ -184,8 +185,14 @@
   let replyTo = null;      // his message text she's replying to
   let ended = false;
   let lastReport = null;
+  let limitTries = 0;      // how many times in a row we hit the free limit
+  let herLines = 0;        // messages she has sent
+  let timeLeft = 0;        // seconds left on the timer
+  let timerInt = null;
+  let paused = false;      // timer pauses while the AI is busy / over limit
 
-  $("turnsInfo").textContent = S.TURNS;
+  $("minutesInfo").textContent = S.MINUTES;
+  $("minMsgsInfo").textContent = S.MIN_MSGS;
   if (!C.WORKER_URL || C.WORKER_URL.includes("PASTE_")) $("configWarn").classList.remove("hidden");
   try { $("chatterName").value = localStorage.getItem("gfe_name") || ""; } catch (e) {}
 
@@ -203,11 +210,13 @@
       knownHobby: hobbies[0], hiddenHobby: hobbies[1],
       mood: pick(C.MOODS), event: pick(C.LIFE_EVENTS),
       hidden: pickN(C.HIDDEN_DETAILS, 2), style: pick(C.TEXT_STYLES),
+      personality: pick(C.PERSONALITIES || ["friendly and easygoing"]),
+      quirk: pick(C.QUIRKS || ["uses 'haha' a lot"]),
     };
   }
 
   function fanPrompt(p) {
-    const turnNow = Math.min(turns + 1, S.TURNS);
+    const turnNow = turns + 1;
     return `You are ${p.name}, a ${p.age}-year-old ${p.job}. You are texting a girl you matched with on Tinder. ${C.SCENARIO}
 
 WHO YOU ARE
@@ -216,11 +225,13 @@ WHO YOU ARE
 - Tonight's mood: ${p.mood}.
 - Going on in your life right now: ${p.event}.
 - Personal details about you: you ${p.hidden[0]}; you ${p.hidden[1]}.
+- Personality: ${p.personality}. Let it show in how you joke, flirt and react.
+- Texting habit: ${p.quirk}.
 - How you text: ${p.style}.
 
 HINTS (very important)
-The chat lasts about ${S.TURNS} of her turns. Right now it's her turn ${turnNow} of ${S.TURNS}.
-Before the chat ends, casually drop ONE small hint about each of these, spread out (one hint every 2–3 turns, never two in the same reply):
+The chat is short (about ${S.MINUTES} minutes, roughly 8 of her turns). Right now it's her turn ${turnNow}.
+By her 7th turn, casually drop ONE small hint about each of these, spread out (about one hint every other reply, never two in the same reply):
   1. what's going on in your life (hint at it in your first or second text),
   2. ${p.hiddenHobby},
   3. that you ${p.hidden[0]},
@@ -242,25 +253,43 @@ HOW TO TEXT
 
   // ---------- AI call ----------
   async function ai(system, msgs, wantJson = false, temperature = 0.9) {
+    // Quietly retries short "busy" errors. Free-limit errors are thrown right away
+    // (retrying instantly only burns more of the free quota).
     let lastErr;
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt > 0) await sleep(4000 * attempt);
+      let res, data;
       try {
-        const res = await fetch(C.WORKER_URL, {
+        res = await fetch(C.WORKER_URL, {
           method: "POST",
           headers: { "Content-Type": "text/plain;charset=utf-8" },
           body: JSON.stringify({ system, messages: msgs, wantJson, temperature }),
         });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && !data.error) return data.text;
-        lastErr = new Error(data.error || `Error ${res.status}`);
-        if (![429, 502, 503].includes(res.status)) throw lastErr;
-      } catch (e) {
-        lastErr = e;
-        if (!/busy|reach|fetch|network/i.test(e.message)) throw e;
-      }
+        data = await res.json().catch(() => ({}));
+      } catch (e) { lastErr = new Error("Couldn't reach the AI."); continue; }
+      if (res.ok && !data.error) return data.text;
+      const err = new Error(data.error || `Error ${res.status}`);
+      if (data.limit || res.status === 429 || /free limit/i.test(err.message)) { err.limit = true; throw err; }
+      lastErr = err;
+      if (!/busy|reach/i.test(err.message) && ![502, 503].includes(res.status)) throw err;
     }
     throw lastErr;
+  }
+
+  // Shows a countdown and retries by itself when the free AI limit is hit.
+  function limitWait(seconds, onRetry) {
+    const d = addBubble("err", "");
+    let left = seconds, timer;
+    const txt = document.createElement("div");
+    const now = document.createElement("button"); now.type = "button"; now.textContent = "Try now";
+    const go = () => { clearInterval(timer); d.remove(); onRetry(); };
+    now.onclick = go;
+    const tick = () => {
+      txt.textContent = `⏳ Lots of people are practicing right now (free AI limit). Retrying in ${left}s…`;
+      if (left-- <= 0) go();
+    };
+    d.append(txt, now); tick(); timer = setInterval(tick, 1000);
+    return d;
   }
 
   function toApiMessages(upTo) {
@@ -320,8 +349,32 @@ HOW TO TEXT
   $("replyCancel").onclick = clearReply;
 
   function updateCounter() {
-    $("counter").textContent = `Turn ${Math.min(turns, S.TURNS)} / ${S.TURNS}`;
-    $("endBtn").disabled = turns < S.MIN_END || ended;
+    const m = Math.floor(Math.max(0, timeLeft) / 60), sec = String(Math.max(0, timeLeft) % 60).padStart(2, "0");
+    const clock = timerInt || timeLeft < S.MINUTES * 60 ? `⏱ ${m}:${sec}${paused ? " (paused)" : ""}` : `⏱ ${S.MINUTES}:00`;
+    $("counter").textContent = `${clock} · ${herLines}/${S.MIN_MSGS} msgs`;
+    $("counter").style.color = timeLeft <= 30 && timerInt ? "var(--warn)" : "";
+    $("endBtn").disabled = herLines < S.MIN_MSGS || ended;
+  }
+
+  // ---------- timer ----------
+  function startTimer() {
+    clearInterval(timerInt);
+    timerInt = setInterval(() => {
+      if (ended) { clearInterval(timerInt); return; }
+      if (!paused) timeLeft--;
+      updateCounter();
+      if (timeLeft <= 0) { clearInterval(timerInt); timeUp(); }
+    }, 1000);
+  }
+  function timeUp() {
+    if (ended) return;
+    if (herLines >= S.MIN_MSGS) { finish(); return; }
+    ended = true;
+    clearTimeout(stackTimer); typing(false); seen(false); clearReply(); updateCounter();
+    const d = addBubble("err", `⏱ Time's up! You sent ${herLines}/${S.MIN_MSGS} messages — not enough to get a score. Try again and keep the convo going 💪`);
+    const b = document.createElement("button"); b.type = "button"; b.textContent = "New chat";
+    b.onclick = () => show("startView");
+    d.appendChild(document.createElement("br")); d.appendChild(b);
   }
 
   // ---------- his turn ----------
@@ -345,12 +398,20 @@ HOW TO TEXT
       reply = await ai(fanPrompt(persona), toApiMessages(upTo));
     } catch (e) {
       typing(false); seen(false);
+      paused = true; updateCounter();   // don't eat the chatter's time while the AI is down
+      if (e.limit) {
+        limitTries++;
+        limitWait(Math.min(60, 20 * limitTries), () => { busy = false; hisTurn(isOpening); });
+        return; // stays busy until retry
+      }
       const d = addBubble("err", "⚠️ " + e.message);
       const b = document.createElement("button"); b.textContent = "Try again"; b.type = "button";
       b.onclick = () => { d.remove(); busy = false; hisTurn(isOpening); };
       d.appendChild(document.createElement("br")); d.appendChild(b);
       return; // stays busy until retry
     }
+    limitTries = 0;
+    if (paused) { paused = false; updateCounter(); }
     const parts = reply.split("||").map(s => s.replace(/^\s*["']|["']\s*$/g, "").trim()).filter(Boolean).slice(0, 3);
     for (let i = 0; i < parts.length; i++) {
       const want = Math.min(S.TYPE_MAX, Math.max(S.TYPE_MIN, parts[i].length * 60));
@@ -364,9 +425,8 @@ HOW TO TEXT
     }
     typing(false);
     if (!isOpening) { turns++; updateCounter(); }
+    if (isOpening && !timerInt && !ended) startTimer();   // clock starts once he's texted
     busy = false;
-
-    if (turns >= S.TURNS) { finish(); return; }
     // She kept typing while he replied → answer that next.
     if (history.slice(upTo).some(m => m.role === "her")) {
       pendingSince = Date.now(); scheduleReply();
@@ -380,6 +440,7 @@ HOW TO TEXT
     try { localStorage.setItem("gfe_name", chatter); } catch (e) {}
     persona = makePersona();
     history = []; turns = 0; ended = false; busy = false; pendingSince = null; lastReport = null;
+    herLines = 0; timeLeft = S.MINUTES * 60; paused = false; clearInterval(timerInt); timerInt = null;
     clearTimeout(stackTimer); clearReply();
     $("msgs").innerHTML = ""; $("input").value = ""; checkInput();
     $("avatar").textContent = persona.name[0];
@@ -403,6 +464,7 @@ HOW TO TEXT
     const msg = { role: "her", text: t };
     if (replyTo) msg.replyTo = replyTo;
     history.push(msg);
+    herLines++; updateCounter();
     addBubble("her", t, { quote: replyTo ? `${persona.name}: ${replyTo}` : null, banned });
     if ($("typingDots")) typing(true);
     $("input").value = ""; autosize(); checkInput(); clearReply();
@@ -446,7 +508,7 @@ HOW TO TEXT
     const skills = C.SKILLS.map((s, i) => `${i + 1}. ${s.name}: ${s.desc}`).join("\n");
     return `You are a supportive trainer at a chatting agency. Chatters practice "GFE" (girlfriend experience): texting a guy like a real girl who likes him — showing interest in his life, following up on what he shares, caring about him, sharing a bit about herself, and making him feel special. GFE is NOT just "im bored in bed", "wyd", or scripted lines.
 
-This is PRACTICE. Grade encouragingly and fairly — reward effort. A chatter who is genuinely warm, asks about his life and follows up a few times should land around 75–90. Only give low scores for clearly dry, generic, self-focused or scripted chatting.
+This was a short ${S.MINUTES}-minute practice chat, so don't expect her to cover everything. This is PRACTICE. Grade encouragingly and fairly — reward effort. A chatter who is genuinely warm, asks about his life and follows up a few times should land around 75–90. Only give low scores for clearly dry, generic, self-focused or scripted chatting.
 
 Chat style notes: she may send several short lines in a row (that's the agency's normal style — never penalize it). "[replying to ...]" means she replied to a specific text of his.
 
@@ -479,6 +541,7 @@ Reply ONLY with JSON in this exact shape:
   async function finish() {
     if (ended && lastReport) return;
     ended = true;
+    clearInterval(timerInt);
     clearTimeout(stackTimer); typing(false); seen(false); clearReply();
     updateCounter();
     addBubble("sys", "Chat ended — getting your score…");
@@ -493,8 +556,17 @@ Reply ONLY with JSON in this exact shape:
       r.banned = allBanned();
       lastReport = r;
       renderReport(r);
+      saveResult(r);
     } catch (e) {
       $("reportLoading").innerHTML = "";
+      if (e.limit) {
+        const p = document.createElement("p"); p.className = "card";
+        let left = 45;
+        const tick = () => { p.textContent = `⏳ Lots of people are practicing right now (free AI limit). Scoring again in ${left}s…`; if (left-- <= 0) { clearInterval(t); lastReport = null; finish(); } };
+        const t = setInterval(tick, 1000); tick();
+        $("reportLoading").append(p);
+        return;
+      }
       const p = document.createElement("p"); p.className = "card"; p.textContent = "⚠️ Couldn't score this chat: " + e.message;
       const b = document.createElement("button"); b.className = "btn"; b.textContent = "Try again";
       b.onclick = () => { lastReport = null; finish(); };
@@ -567,6 +639,9 @@ Reply ONLY with JSON in this exact shape:
     const tr = el("div", "card"); tr.append(el("h3", null, "Chat transcript"), el("div", "transcript", transcriptText()));
     body.appendChild(tr);
 
+    const saveLine = el("div", "muted small"); saveLine.id = "saveStatus"; saveLine.style.textAlign = "center";
+    body.appendChild(saveLine);
+
     const actions = el("div", "row");
     const copy = el("button", "btn ghost", "Copy report");
     copy.onclick = async () => { try { await navigator.clipboard.writeText(reportText()); copy.textContent = "Copied ✓"; } catch (e) { copy.textContent = "Copy failed"; } setTimeout(() => copy.textContent = "Copy report", 1800); };
@@ -586,6 +661,25 @@ Reply ONLY with JSON in this exact shape:
     $("reportLoading").classList.add("hidden");
     body.classList.remove("hidden");
     window.scrollTo(0, 0);
+  }
+
+  // Sends the result to the Google Sheet (through Apps Script). Never blocks the report.
+  async function saveResult(r) {
+    if (!S.SAVE) return;
+    const status = $("saveStatus");
+    try {
+      const res = await fetch(C.WORKER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action: "save", result: {
+          chatter, score: r.overall, gfe: r.gfe, guy: `${persona.name}, ${persona.age} (${persona.job})`,
+          messages: herLines, minutes: Math.round((S.MINUTES * 60 - Math.max(0, timeLeft)) / 6) / 10,
+          banned: (r.banned || []).join(", "), summary: r.summary, tip: r.tip, transcript: transcriptText(),
+        } }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (status) status.textContent = data.saved ? "✅ Your result was sent to your manager." : "";
+    } catch (e) { if (status) status.textContent = ""; }
   }
 
   function reportText() {

@@ -18,13 +18,16 @@ const CONFIG = {
   // ------------------------------------------------------------------
   //  CHAT LENGTH & TIMING
   // ------------------------------------------------------------------
-  // How many turns before the chat ends automatically and gets scored.
-  // A "turn" = everything the chatter sends before he replies
-  // (3 lines sent one after another still count as 1 turn).
-  TURNS: 12,
+  // How long each practice chat lasts (minutes). When time's up it ends.
+  // (The timer pauses while the AI is busy, so nobody loses time.)
+  CHAT_MINUTES: 5,
 
-  // The chatter can end early (and get scored) after this many turns.
-  MIN_TURNS_TO_END_EARLY: 6,
+  // Messages the chatter must send to get a score. Under this when time
+  // runs out = no score, try again. They can also end early once they hit it.
+  MIN_MESSAGES_TO_SCORE: 10,
+
+  // Save every finished chat to the Google Sheet (needs SHEET_ID in Apps Script).
+  SAVE_RESULTS: true,
 
   // After the chatter's last line, he waits this many seconds before replying,
   // so she can stack more lines (one line → enter → another line → enter).
@@ -127,6 +130,34 @@ const CONFIG = {
     "volunteers at an animal shelter some weekends",
     "is learning Spanish on Duolingo",
     "has a tattoo of his late dad's initials"
+  ],
+
+  // His personality — changes how he talks, jokes and flirts.
+  PERSONALITIES: [
+    "goofy and jokes around a lot, uses funny comebacks",
+    "shy and sweet at first, opens up once she's warm",
+    "confident and a little cocky, likes playful teasing",
+    "romantic softie who says sweet things",
+    "chill and laid-back, nothing really stresses him",
+    "sarcastic but caring underneath",
+    "nerdy and passionate, gets excited about his interests",
+    "country boy, polite, says things like 'darlin' sometimes",
+    "hard worker who's a bit tired of life but appreciates kindness",
+    "flirty and charming, gives lots of compliments"
+  ],
+
+  // A little texting habit that makes him feel real.
+  QUIRKS: [
+    "uses 'lmao' a lot",
+    "sends voice-note style long texts sometimes, then apologizes for rambling",
+    "uses a lot of 😂",
+    "double texts when excited",
+    "makes small typos and doesn't fix them",
+    "asks 'wbu?' a lot",
+    "calls her 'trouble' as a nickname",
+    "uses 'fr' and 'ngl'",
+    "sends a lot of 'haha' and 'hehe'",
+    "is a little slow to reply and says 'sorry was driving'"
   ],
 
   // How he texts.
