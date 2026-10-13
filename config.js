@@ -20,7 +20,7 @@ const CONFIG = {
   // ------------------------------------------------------------------
   // How long each practice chat lasts (minutes). When time's up it ends.
   // (The timer pauses while the AI is busy, so nobody loses time.)
-  CHAT_MINUTES: 5,
+  CHAT_MINUTES: 10,
 
   // Messages the chatter must send to get a score. Under this when time
   // runs out = no score, try again. They can also end early once they hit it.
