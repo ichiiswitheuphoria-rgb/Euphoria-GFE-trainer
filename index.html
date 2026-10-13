@@ -109,7 +109,7 @@
         <li>Send as many lines as you want in a row. He replies once you stop typing for a few seconds.</li>
         <li><b>Tap any of his messages</b> to reply to that exact message.</li>
         <li>No selling, no PPVs. This is pure GFE practice.</li>
-        <li>You have <b><span id="minutesInfo">5</span> minutes</b>. Send at least <b><span id="minMsgsInfo">10</span> messages</b> to get a score.</li>
+        <li>You have <b><span id="minutesInfo">10</span> minutes</b> (the clock pauses while he's typing). Send at least <b><span id="minMsgsInfo">10</span> messages</b> — under that when time runs out = <b>FAILED</b>.</li>
       </ul>
     </div>
     <div>
@@ -230,8 +230,8 @@ WHO YOU ARE
 - How you text: ${p.style}.
 
 HINTS (very important)
-The chat is short (about ${S.MINUTES} minutes, roughly 8 of her turns). Right now it's her turn ${turnNow}.
-By her 7th turn, casually drop ONE small hint about each of these, spread out (about one hint every other reply, never two in the same reply):
+The chat lasts about ${S.MINUTES} minutes (roughly ${Math.round(S.MINUTES * 1.5)} of her turns). Right now it's her turn ${turnNow}.
+By her ${Math.max(5, Math.round(S.MINUTES * 0.9))}th turn, casually drop ONE small hint about each of these, spread out (about one hint every other reply, never two in the same reply):
   1. what's going on in your life (hint at it in your first or second text),
   2. ${p.hiddenHobby},
   3. that you ${p.hidden[0]},
@@ -241,8 +241,9 @@ A hint is a short natural mention, not the whole story. Example: "lol sorry my g
 HOW TO TEXT
 - You are a real guy, not an AI. Never break character or mention AI, tests, or training.
 - Casual, short texts like on your phone. No narration, no asterisks.
-- Each reply does ONE thing: either answer/react to her, OR share something, OR ask her one question. Don't pile a question on top of a new topic — keep it easy for her to reply.
-- Usually 1 text, sometimes 2 short ones. Separate multiple texts with " || ".
+- KEEP IT SHORT. Most replies are ONE text of about 5–15 words, like a real guy on his phone. Never more than 2 short texts. Separate 2 texts with " || ".
+- Each reply does ONE thing: react to what she said, OR share one small thing, OR ask one question. Never a long story, never a list, never two topics at once — she should always know exactly what to reply to.
+- Let her lead and dig. Give a little, and save the details for when she asks.
 - She may send several short lines in a row — that's normal, reply to them together naturally.
 - If her message starts with (replying to: "...") she is replying to that exact text of yours.
 - You like her and you're easy to talk to. When she shows interest, warm up and share more.
@@ -350,7 +351,7 @@ HOW TO TEXT
 
   function updateCounter() {
     const m = Math.floor(Math.max(0, timeLeft) / 60), sec = String(Math.max(0, timeLeft) % 60).padStart(2, "0");
-    const clock = timerInt || timeLeft < S.MINUTES * 60 ? `⏱ ${m}:${sec}${paused ? " (paused)" : ""}` : `⏱ ${S.MINUTES}:00`;
+    const clock = timerInt || timeLeft < S.MINUTES * 60 ? `⏱ ${m}:${sec}${paused ? " ⏸" : ""}` : `⏱ ${S.MINUTES}:00`;
     $("counter").textContent = `${clock} · ${herLines}/${S.MIN_MSGS} msgs`;
     $("counter").style.color = timeLeft <= 30 && timerInt ? "var(--warn)" : "";
     $("endBtn").disabled = herLines < S.MIN_MSGS || ended;
@@ -371,10 +372,11 @@ HOW TO TEXT
     if (herLines >= S.MIN_MSGS) { finish(); return; }
     ended = true;
     clearTimeout(stackTimer); typing(false); seen(false); clearReply(); updateCounter();
-    const d = addBubble("err", `⏱ Time's up! You sent ${herLines}/${S.MIN_MSGS} messages — not enough to get a score. Try again and keep the convo going 💪`);
+    const d = addBubble("err", `❌ FAILED — time's up and you only sent ${herLines}/${S.MIN_MSGS} messages. Keep the convo going and reply faster next time 💪`);
     const b = document.createElement("button"); b.type = "button"; b.textContent = "New chat";
     b.onclick = () => show("startView");
     d.appendChild(document.createElement("br")); d.appendChild(b);
+    saveResult({ overall: 0, gfe: "FAILED", summary: `Time ran out with only ${herLines}/${S.MIN_MSGS} messages sent.`, tip: "Send more messages and keep the conversation moving.", banned: allBanned() });
   }
 
   // ---------- his turn ----------
@@ -389,6 +391,7 @@ HOW TO TEXT
     if (busy || ended) return;
     busy = true;
     const upTo = history.length;              // he answers everything sent so far
+    paused = true; updateCounter();           // clock stops while he loads/types
     if (!isOpening) { pendingSince = null; seen(true); }
     const started = Date.now();
     let reply;
@@ -411,8 +414,7 @@ HOW TO TEXT
       return; // stays busy until retry
     }
     limitTries = 0;
-    if (paused) { paused = false; updateCounter(); }
-    const parts = reply.split("||").map(s => s.replace(/^\s*["']|["']\s*$/g, "").trim()).filter(Boolean).slice(0, 3);
+    const parts = reply.split("||").map(s => s.replace(/^\s*["']|["']\s*$/g, "").trim()).filter(Boolean).slice(0, 2);
     for (let i = 0; i < parts.length; i++) {
       const want = Math.min(S.TYPE_MAX, Math.max(S.TYPE_MIN, parts[i].length * 60));
       const elapsed = i === 0 ? Date.now() - started : 0;
@@ -424,7 +426,9 @@ HOW TO TEXT
       if (i < parts.length - 1) { typing(true); }
     }
     typing(false);
-    if (!isOpening) { turns++; updateCounter(); }
+    paused = false;
+    if (!isOpening) { turns++; }
+    updateCounter();
     if (isOpening && !timerInt && !ended) startTimer();   // clock starts once he's texted
     busy = false;
     // She kept typing while he replied → answer that next.
