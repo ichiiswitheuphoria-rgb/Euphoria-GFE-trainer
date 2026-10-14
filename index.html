@@ -230,28 +230,38 @@
   }
 
   // ---------- persona ----------
+  // Picks a name this browser hasn't used in its last few chats.
+  function pickFresh(arr, key) {
+    let recent = [];
+    try { recent = JSON.parse(localStorage.getItem(key) || "[]"); } catch (e) {}
+    const pool = arr.filter(x => !recent.includes(x));
+    const v = pick(pool.length ? pool : arr);
+    try { localStorage.setItem(key, JSON.stringify([v, ...recent].slice(0, 8))); } catch (e) {}
+    return v;
+  }
   function makePersona() {
     const hobbies = pickN(C.HOBBIES, 2);
     return {
-      name: pick(C.NAMES), age: pick(C.AGES), job: pick(C.JOBS),
+      name: pickFresh(C.NAMES, "gfe_last_names"), age: pick(C.AGES), job: pick(C.JOBS),
       knownHobby: hobbies[0], hiddenHobby: hobbies[1],
       mood: pick(C.MOODS), event: pick(C.LIFE_EVENTS),
       hidden: pickN(C.HIDDEN_DETAILS, 2), style: pick(C.TEXT_STYLES),
       personality: pick(C.PERSONALITIES || ["friendly and easygoing"]),
       quirk: pick(C.QUIRKS || ["uses 'haha' a lot"]),
+      scenario: C.SCENARIOS && C.SCENARIOS.length ? pick(C.SCENARIOS) : (C.SCENARIO || "He texts you first tonight."),
     };
   }
 
   function fanPrompt(p) {
     const turnNow = turns + 1;
-    return `You are ${p.name}, a ${p.age}-year-old ${p.job}. You are texting a girl you matched with on Tinder. ${C.SCENARIO}
+    return `You are ${p.name}, a ${p.age}-year-old ${p.job}. You matched with a girl on Tinder about a week ago and you've texted every day since — you're starting to really like each other. The situation tonight ("he" = you): ${p.scenario}
 
 WHO YOU ARE
 - Job: ${p.job}. She already knows this.
 - Hobbies: ${p.knownHobby} (she already knows) and ${p.hiddenHobby} (not mentioned yet).
 - Tonight's mood: ${p.mood}.
 - Going on in your life right now: ${p.event}.
-- Personal details about you: you ${p.hidden[0]}; you ${p.hidden[1]}.
+- Personal details about you (written about "him" = you): he ${p.hidden[0]}; he ${p.hidden[1]}.
 - Personality: ${p.personality}. Let it show in how you joke, flirt and react.
 - Texting habit: ${p.quirk}.
 - How you text: ${p.style}.
@@ -261,8 +271,8 @@ The chat lasts about ${S.MINUTES} minutes (roughly ${Math.round(S.MINUTES * 1.5)
 By her ${Math.max(5, Math.round(S.MINUTES * 0.9))}th turn, casually drop ONE small hint about each of these, spread out (about one hint every other reply, never two in the same reply):
   1. what's going on in your life (hint at it in your first or second text),
   2. ${p.hiddenHobby},
-  3. that you ${p.hidden[0]},
-  4. that you ${p.hidden[1]}.
+  3. that he (you) ${p.hidden[0]},
+  4. that he (you) ${p.hidden[1]}.
 A hint is a short natural mention, not the whole story. Example: "lol sorry my grandma just texted me" or "ugh my legs are dead from training". If she asks about it, happily tell her more. If she ignores it, don't repeat it — move on.
 
 HOW TO TEXT
@@ -489,7 +499,7 @@ HOW TO TEXT
     const nb = $("notesBar"); nb.textContent = "📝 What you know so far: ";
     const b1 = document.createElement("b"); b1.textContent = persona.job; nb.append(b1, " · into ");
     const b2 = document.createElement("b"); b2.textContent = persona.knownHobby; nb.append(b2);
-    addBubble("sys", "You've been talking for a week. He just texted you.");
+    addBubble("sys", "You've been talking for a week. " + persona.scenario);
     updateCounter();
     show("chatView");
     hisTurn(true);
@@ -555,6 +565,7 @@ Chat style notes: she may send several short lines in a row (that's the agency's
 
 His hidden profile:
 - ${persona.name}, ${persona.age}, ${persona.job}
+- Situation tonight: ${persona.scenario}
 - Hobbies: ${persona.knownHobby} (she knew), ${persona.hiddenHobby}
 - Mood tonight: ${persona.mood}
 - Going on in his life: ${persona.event}
