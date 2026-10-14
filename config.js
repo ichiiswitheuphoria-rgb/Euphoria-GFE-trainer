@@ -13,7 +13,7 @@
 const CONFIG = {
 
   // Paste your Google Apps Script link here (the one ending in /exec).
-  WORKER_URL: "PASTE_YOUR_APPS_SCRIPT_LINK_HERE",
+  WORKER_URL: "https://script.google.com/macros/s/AKfycbwlCEsagGfKVooPXHJejLl6cv6wabWi8GRZ-FLbAycOayGGTwIcodlM2i37FQ-3QO1z/exec",
 
   // ------------------------------------------------------------------
   //  CHAT LENGTH & TIMING
