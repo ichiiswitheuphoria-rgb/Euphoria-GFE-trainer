@@ -134,7 +134,8 @@
         <li>Send as many lines as you want in a row. He replies once you stop typing for a few seconds.</li>
         <li><b>Tap any of his messages</b> to reply to that exact message.</li>
         <li>No selling, no PPVs. This is pure GFE practice.</li>
-        <li>You have <b><span id="minutesInfo">10</span> minutes</b> (the clock pauses while he's typing). Get to at least <b><span id="minMsgsInfo">10</span> replies</b> (lines you send together before he answers count as 1) — under that when time runs out = <b>FAILED</b>.</li>
+        <li>Each time he texts, you have <b><span id="replySecsInfo">60</span> seconds to reply</b> (lines you send together count as 1 reply). The clock only runs on your turn.</li>
+        <li>The chat is <b><span id="repliesInfo">10</span> replies</b> long. Miss more than <b><span id="maxMissedInfo">3</span></b> and it's <b>FAILED</b>.</li>
       </ul>
     </div>
     <div>
@@ -156,7 +157,7 @@
     <div class="msgs" id="msgs"></div>
     <div class="endbar">
       <span id="counter">Turn 0 / 12</span>
-      <button id="endBtn" class="btn" disabled>End &amp; get score</button>
+      <button id="endBtn" class="btn hidden" disabled>End &amp; get score</button>
     </div>
     <div class="replybar hidden" id="replyBar">
       <div class="rtext" id="replyText"></div>
@@ -184,8 +185,9 @@
   const C = window.CONFIG || CONFIG;
   // Defaults so older config.js files keep working.
   const S = {
-    MINUTES: C.CHAT_MINUTES || 5,
-    MIN_MSGS: C.MIN_MESSAGES_TO_SCORE || C.MIN_MESSAGES || 10,
+    REPLIES: C.REPLIES || C.MIN_MESSAGES_TO_SCORE || 10,   // replies per chat
+    REPLY_SECS: C.REPLY_SECONDS || 60,                      // time she has for each reply
+    MAX_MISSED: C.MAX_MISSED_REPLIES ?? 3,                  // more than this = FAILED
     SAVE: C.SAVE_RESULTS !== false,
     STACK: (C.STACK_WAIT_SECONDS ?? 6) * 1000,
     STACK_MAX: (C.MAX_STACK_WAIT_SECONDS ?? 30) * 1000,
@@ -214,12 +216,15 @@
   let herLines = 0;        // lines she has sent (for the sheet)
   let replies = 0;         // her replies: a stack of lines sent together = 1 reply
   let lastHerIdx = -1;     // history index of her last line already counted
-  let timeLeft = 0;        // seconds left on the timer
-  let timerInt = null;
-  let paused = false;      // timer pauses while the AI is busy / over limit
+  let replyLeft = 0;       // seconds left for her current reply
+  let replyInt = null;     // reply clock (only runs while it's her turn)
+  let answered = false;    // she has sent at least one line this round
+  let missed = 0;          // replies she didn't send in time
+  let startedAt = 0;
 
-  $("minutesInfo").textContent = S.MINUTES;
-  $("minMsgsInfo").textContent = S.MIN_MSGS;
+  $("replySecsInfo").textContent = S.REPLY_SECS;
+  $("repliesInfo").textContent = S.REPLIES;
+  $("maxMissedInfo").textContent = S.MAX_MISSED;
   if (!C.WORKER_URL || C.WORKER_URL.includes("PASTE_")) $("configWarn").classList.remove("hidden");
   try { $("chatterName").value = localStorage.getItem("gfe_name") || ""; } catch (e) {}
 
@@ -267,8 +272,8 @@ WHO YOU ARE
 - How you text: ${p.style}.
 
 HINTS (very important)
-The chat lasts about ${S.MINUTES} minutes (roughly ${Math.round(S.MINUTES * 1.5)} of her turns). Right now it's her turn ${turnNow}.
-By her ${Math.max(5, Math.round(S.MINUTES * 0.9))}th turn, casually drop ONE small hint about each of these, spread out (about one hint every other reply, never two in the same reply):
+The chat lasts ${S.REPLIES} of her replies. Right now it's her reply ${turnNow} of ${S.REPLIES}.
+By her ${Math.max(4, S.REPLIES - 3)}th reply, casually drop ONE small hint about each of these, spread out (about one hint every other reply, never two in the same reply):
   1. what's going on in your life (hint at it in your first or second text),
   2. ${p.hiddenHobby},
   3. that he (you) ${p.hidden[0]},
@@ -283,6 +288,7 @@ HOW TO TEXT
 - Let her lead and dig. Give a little, and save the details for when she asks.
 - She may send several short lines in a row — that's normal, reply to them together naturally.
 - If her message starts with (replying to: "...") she is replying to that exact text of yours.
+- If her message is "(no reply — she took too long)", she went quiet: send ONE short natural nudge ("u there? 👀", "lol did i lose u") or just keep the convo going. Don't be upset.
 - You like her and you're easy to talk to. When she shows interest, warm up and share more.
 - If she's dry or generic ("wyd", "nice", "i see"), get a bit shorter, but stay friendly.
 - Flirting is fine, keep it PG-13 like normal Tinder. If she gets sexual fast or asks for money/tips, act confused and a bit put off.
@@ -395,34 +401,50 @@ HOW TO TEXT
   }
 
   function updateCounter() {
-    const m = Math.floor(Math.max(0, timeLeft) / 60), sec = String(Math.max(0, timeLeft) % 60).padStart(2, "0");
-    const clock = timerInt || timeLeft < S.MINUTES * 60 ? `⏱ ${m}:${sec}${paused ? " ⏸" : ""}` : `⏱ ${S.MINUTES}:00`;
-    $("counter").textContent = `${clock} · ${replies}/${S.MIN_MSGS} replies`;
-    $("counter").style.color = timeLeft <= 30 && timerInt ? "var(--warn)" : "";
-    $("endBtn").disabled = replies < S.MIN_MSGS || ended;
+    const round = Math.min(replies + 1, S.REPLIES);
+    let clock;
+    if (ended) clock = "done";
+    else if (replyInt) clock = `⏱ 0:${String(Math.max(0, replyLeft)).padStart(2, "0")}`;
+    else if (answered) clock = "✓ sent";
+    else clock = "⏱ his turn";
+    const miss = missed ? ` · ${missed} missed` : "";
+    $("counter").textContent = `Reply ${round}/${S.REPLIES} · ${clock}${miss}`;
+    $("counter").style.color = replyInt && replyLeft <= 15 ? "var(--bad)" : (missed > S.MAX_MISSED ? "var(--bad)" : "");
   }
 
-  // ---------- timer ----------
-  function startTimer() {
-    clearInterval(timerInt);
-    timerInt = setInterval(() => {
-      if (ended) { clearInterval(timerInt); return; }
-      if (!paused) timeLeft--;
-      updateCounter();
-      if (timeLeft <= 0) { clearInterval(timerInt); timeUp(); }
-    }, 1000);
-  }
-  function timeUp() {
+  // ---------- reply clock: 60s for each of her replies ----------
+  function startReplyClock() {
+    stopReplyClock();
     if (ended) return;
-    countReply();   // an unanswered stack still counts
-    if (replies >= S.MIN_MSGS) { finish(); return; }
+    answered = false;
+    replyLeft = S.REPLY_SECS;
+    replyInt = setInterval(() => {
+      replyLeft--;
+      updateCounter();
+      if (replyLeft <= 0) { stopReplyClock(); missedReply(); }
+    }, 1000);
+    updateCounter();
+  }
+  function stopReplyClock() { clearInterval(replyInt); replyInt = null; updateCounter(); }
+
+  function missedReply() {
+    if (ended || answered) return;
+    missed++;
+    if (missed > S.MAX_MISSED) { failedChat(); return; }    // too many missed → FAILED right away
+    history.push({ role: "her", text: "(no reply — she took too long)", missed: true });
+    addBubble("sys", `⏰ Missed — no reply in ${S.REPLY_SECS}s (${missed} missed)`);
+    pendingSince = Date.now();
+    if (!busy) hisTurn();
+  }
+
+  function failedChat() {
     ended = true;
-    clearTimeout(stackTimer); typing(false); seen(false); clearReply(); updateCounter();
-    const d = addBubble("err", `❌ FAILED — time's up and you only got to ${replies}/${S.MIN_MSGS} replies. Keep the convo going and reply faster next time 💪`);
+    stopReplyClock(); clearTimeout(stackTimer); typing(false); seen(false); clearReply(); updateCounter();
+    const d = addBubble("err", `❌ FAILED — you missed ${missed} of ${S.REPLIES} replies (max ${S.MAX_MISSED}). Reply within ${S.REPLY_SECS} seconds next time 💪`);
     const b = document.createElement("button"); b.type = "button"; b.textContent = "New chat";
     b.onclick = () => show("startView");
     d.appendChild(document.createElement("br")); d.appendChild(b);
-    saveResult({ overall: 0, gfe: "FAILED", summary: `Time ran out with only ${replies}/${S.MIN_MSGS} replies.`, tip: "Send more messages and keep the conversation moving.", banned: allBanned() });
+    saveResult({ overall: 0, gfe: "FAILED", summary: `Missed ${missed} of ${S.REPLIES} replies (over the limit of ${S.MAX_MISSED}).`, tip: `Reply within ${S.REPLY_SECS} seconds every time.`, banned: allBanned() });
   }
 
   // ---------- his turn ----------
@@ -438,7 +460,7 @@ HOW TO TEXT
     busy = true;
     const upTo = history.length;              // he answers everything sent so far
     if (!isOpening) { countReply(); updateCounter(); }   // her stack is done = 1 reply
-    paused = true; updateCounter();           // clock stops while he loads/types
+    stopReplyClock();                         // her clock never runs while he loads/types
     if (!isOpening) { pendingSince = null; seen(true); }
     const started = Date.now();
     let reply;
@@ -448,7 +470,6 @@ HOW TO TEXT
       reply = await ai(fanPrompt(persona), toApiMessages(upTo));
     } catch (e) {
       typing(false); seen(false);
-      paused = true; updateCounter();   // don't eat the chatter's time while the AI is down
       if (e.limit) {
         limitTries++;
         limitWait(Math.min(60, 20 * limitTries), () => { busy = false; hisTurn(isOpening); });
@@ -473,14 +494,16 @@ HOW TO TEXT
       if (i < parts.length - 1) { typing(true); }
     }
     typing(false);
-    paused = false;
     if (!isOpening) { turns++; }
-    updateCounter();
-    if (isOpening && !timerInt && !ended) startTimer();   // clock starts once he's texted
     busy = false;
-    // She kept typing while he replied → answer that next.
+    if (ended) return;
+    if (replies >= S.REPLIES) { finish(); return; }          // 10 replies done → score
+    // She kept typing while he replied → that's already her next reply.
     if (history.slice(upTo).some(m => m.role === "her")) {
+      answered = true; updateCounter();
       pendingSince = Date.now(); scheduleReply();
+    } else {
+      startReplyClock();                                     // her turn: 60s starts now
     }
   }
 
@@ -491,7 +514,7 @@ HOW TO TEXT
     try { localStorage.setItem("gfe_name", chatter); } catch (e) {}
     persona = makePersona();
     history = []; turns = 0; ended = false; busy = false; pendingSince = null; lastReport = null;
-    herLines = 0; replies = 0; lastHerIdx = -1; timeLeft = S.MINUTES * 60; paused = false; clearInterval(timerInt); timerInt = null;
+    herLines = 0; replies = 0; lastHerIdx = -1; missed = 0; answered = false; startedAt = Date.now(); stopReplyClock();
     clearTimeout(stackTimer); clearReply();
     $("msgs").innerHTML = ""; $("input").value = ""; checkInput();
     $("avatar").textContent = persona.name[0];
@@ -516,6 +539,7 @@ HOW TO TEXT
     if (replyTo) msg.replyTo = replyTo;
     history.push(msg);
     herLines++;
+    if (!answered) { answered = true; stopReplyClock(); }   // replied in time
     addBubble("her", t, { quote: replyTo ? `${persona.name}: ${replyTo}` : null, banned });
     if ($("typingDots")) typing(true);
     $("input").value = ""; autosize(); checkInput(); clearReply();
@@ -559,7 +583,7 @@ HOW TO TEXT
     const skills = C.SKILLS.map((s, i) => `${i + 1}. ${s.name}: ${s.desc}`).join("\n");
     return `You are a supportive trainer at a chatting agency. Chatters practice "GFE" (girlfriend experience): texting a guy like a real girl who likes him — showing interest in his life, following up on what he shares, caring about him, sharing a bit about herself, and making him feel special. GFE is NOT just "im bored in bed", "wyd", or scripted lines.
 
-This was a short ${S.MINUTES}-minute practice chat, so don't expect her to cover everything. This is PRACTICE. Grade encouragingly and fairly — reward effort. A chatter who is genuinely warm, asks about his life and follows up a few times should land around 75–90. Only give low scores for clearly dry, generic, self-focused or scripted chatting.
+This was a short practice chat of ${S.REPLIES} replies with ${S.REPLY_SECS} seconds per reply, so don't expect her to cover everything. A line "(no reply — she took too long)" means she missed the reply window${missed ? ` (${missed} missed this chat) — mention it briefly in "Natural flow"` : ""}. This is PRACTICE. Grade encouragingly and fairly — reward effort. A chatter who is genuinely warm, asks about his life and follows up a few times should land around 75–90. Only give low scores for clearly dry, generic, self-focused or scripted chatting.
 
 Chat style notes: she may send several short lines in a row (that's the agency's normal style — never penalize it). "[replying to ...]" means she replied to a specific text of his.
 
@@ -592,8 +616,9 @@ Reply ONLY with JSON in this exact shape:
 
   async function finish() {
     if (ended && lastReport) return;
+    if (!ended && missed > S.MAX_MISSED) { failedChat(); return; }
     ended = true;
-    clearInterval(timerInt);
+    stopReplyClock();
     clearTimeout(stackTimer); typing(false); seen(false); clearReply();
     updateCounter();
     addBubble("sys", "Chat ended — getting your score…");
@@ -726,8 +751,8 @@ Reply ONLY with JSON in this exact shape:
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({ action: "save", result: {
           chatter, score: r.overall, gfe: r.gfe, guy: `${persona.name}, ${persona.age} (${persona.job})`,
-          messages: herLines, minutes: Math.round((S.MINUTES * 60 - Math.max(0, timeLeft)) / 6) / 10,
-          banned: (r.banned || []).join(", "), summary: r.summary, tip: r.tip, transcript: transcriptText(),
+          messages: herLines, minutes: Math.round((Date.now() - startedAt) / 6000) / 10,
+          banned: (r.banned || []).join(", "), summary: (missed ? `[${missed} missed replies] ` : "") + (r.summary || ""), tip: r.tip, transcript: transcriptText(),
         } }),
       });
       const data = await res.json().catch(() => ({}));

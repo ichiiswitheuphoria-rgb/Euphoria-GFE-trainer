@@ -18,14 +18,16 @@ const CONFIG = {
   // ------------------------------------------------------------------
   //  CHAT LENGTH & TIMING
   // ------------------------------------------------------------------
-  // How long each practice chat lasts (minutes). When time's up it ends.
-  // (The timer pauses while he's loading/typing, so only the chatter's own time counts.)
-  CHAT_MINUTES: 10,
+  // How many replies each chat lasts. Lines she sends together before he
+  // answers count as 1 reply. After the last one the chat ends and gets scored.
+  REPLIES: 10,
 
-  // Replies the chatter must reach to get a score (lines sent together before he
-  // answers count as 1 reply). Under this when time
-  // runs out = FAILED (saved to the sheet as FAILED). They can end early once they hit it.
-  MIN_MESSAGES_TO_SCORE: 10,
+  // Seconds she has for EACH reply. The clock starts when he finishes texting
+  // and stops when she sends. Runs out with nothing sent = 1 missed reply.
+  REPLY_SECONDS: 60,
+
+  // Missing more replies than this = FAILED (saved to the sheet as FAILED).
+  MAX_MISSED_REPLIES: 3,
 
   // Save every finished chat to the Google Sheet (needs SHEET_ID in Apps Script).
   SAVE_RESULTS: true,
