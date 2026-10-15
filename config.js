@@ -27,7 +27,7 @@ const CONFIG = {
   REPLY_SECONDS: 60,
 
   // Missing more replies than this = FAILED (saved to the sheet as FAILED).
-  MAX_MISSED_REPLIES: 3,
+  MAX_MISSED_REPLIES: 1,
 
   // Save every finished chat to the Google Sheet (needs SHEET_ID in Apps Script).
   SAVE_RESULTS: true,
@@ -36,7 +36,7 @@ const CONFIG = {
   // so she can stack more lines (one line → enter → another line → enter).
   // If she keeps typing, he keeps waiting — but never longer than MAX.
   STACK_WAIT_SECONDS: 4,
-  MAX_STACK_WAIT_SECONDS: 30,
+  MAX_STACK_WAIT_SECONDS: 20,
 
   // How long he "types" before his message shows up (random between these).
   TYPING_SECONDS_MIN: 2,
