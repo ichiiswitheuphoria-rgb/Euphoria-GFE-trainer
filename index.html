@@ -221,6 +221,8 @@
   let answered = false;    // she has sent at least one line this round
   let missed = 0;          // replies she didn't send in time
   let startedAt = 0;
+  let replyDeadline = null; // when her current reply time runs out (survives a refresh)
+  let failed = false;
 
   $("replySecsInfo").textContent = S.REPLY_SECS;
   $("repliesInfo").textContent = S.REPLIES;
@@ -405,46 +407,108 @@ HOW TO TEXT
     let clock;
     if (ended) clock = "done";
     else if (replyInt) clock = `⏱ 0:${String(Math.max(0, replyLeft)).padStart(2, "0")}`;
-    else if (answered) clock = "✓ sent";
+    else if (answered) clock = "✓ seen";
     else clock = "⏱ his turn";
     const miss = missed ? ` · ${missed} missed` : "";
     $("counter").textContent = `Reply ${round}/${S.REPLIES} · ${clock}${miss}`;
     $("counter").style.color = replyInt && replyLeft <= 15 ? "var(--bad)" : (missed > S.MAX_MISSED ? "var(--bad)" : "");
   }
 
+  // ---------- save the chat so a refresh doesn't reset it ----------
+  const SAVE_KEY = "gfe_active_chat_v1";
+  function persist() {
+    if (!persona) return;
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({
+        chatter, persona, history, replies, missed, lastHerIdx, herLines, turns, startedAt,
+        replyDeadline, answered, ended, failed, lastReport,
+      }));
+    } catch (e) {}
+  }
+  function clearSaved() { try { localStorage.removeItem(SAVE_KEY); } catch (e) {} }
+
+  function restore() {
+    let d = null;
+    try { d = JSON.parse(localStorage.getItem(SAVE_KEY) || "null"); } catch (e) {}
+    if (!d || !d.persona) return false;
+    chatter = d.chatter; persona = d.persona; history = d.history || [];
+    replies = d.replies || 0; missed = d.missed || 0; lastHerIdx = d.lastHerIdx ?? -1;
+    herLines = d.herLines || 0; turns = d.turns || 0; startedAt = d.startedAt || Date.now();
+    answered = !!d.answered; failed = !!d.failed; lastReport = d.lastReport || null;
+    busy = false; pendingSince = null; replyTo = null;
+    fillHeader();
+    $("msgs").innerHTML = "";
+    addBubble("sys", "You've been talking for a week. " + persona.scenario);
+    history.forEach(m => {
+      if (m.missed) addBubble("sys", "⏰ Missed — no reply in time");
+      else if (m.role === "him") addBubble("him", m.text);
+      else addBubble("her", m.text, { quote: m.replyTo ? `${persona.name}: ${m.replyTo}` : null, banned: bannedIn(m.text) });
+    });
+    show("chatView");
+
+    if (lastReport) { ended = true; show("reportView"); renderReport(lastReport); return true; }
+    if (failed) { ended = false; missed = Math.max(missed, S.MAX_MISSED + 1); failedChat(true); return true; }
+    if (d.ended) { ended = false; finish(); return true; }               // was being scored → score again
+    ended = false;
+    updateCounter();
+
+    const lastHer = history.reduce((a, m, i) => (m.role === "her" ? i : a), -1);
+    const lastHim = history.reduce((a, m, i) => (m.role === "him" ? i : a), -1);
+    if (lastHim < 0) { hisTurn(true); return true; }                      // his first text never arrived
+    if (lastHer > lastHim) {                                              // she sent lines he hasn't seen yet
+      if (d.replyDeadline && Date.now() < d.replyDeadline) { startReplyClock(d.replyDeadline, true); pendingSince = Date.now(); scheduleReply(); }
+      else hisTurn();
+      return true;
+    }
+    // his turn was the last thing: her clock resumes from where it was (time kept running)
+    if (d.replyDeadline) {
+      if (Date.now() >= d.replyDeadline) { answered = false; missedReply(); }
+      else startReplyClock(d.replyDeadline);
+    } else startReplyClock();
+    return true;
+  }
+
   // ---------- reply clock: 60s for each of her replies ----------
-  function startReplyClock() {
+  function startReplyClock(deadline, keepAnswered) {
     stopReplyClock();
     if (ended) return;
-    answered = false;
-    replyLeft = S.REPLY_SECS;
+    if (!keepAnswered) answered = false;
+    replyDeadline = deadline || Date.now() + S.REPLY_SECS * 1000;
+    const tick = () => { replyLeft = Math.max(0, Math.ceil((replyDeadline - Date.now()) / 1000)); };
+    tick();
+    persist();
     replyInt = setInterval(() => {
-      replyLeft--;
+      tick();
       updateCounter();
-      if (replyLeft <= 0) { stopReplyClock(); missedReply(); }
+      if (replyLeft <= 0) {
+        stopReplyClock();
+        if (answered) { clearTimeout(stackTimer); if (!busy) hisTurn(); }   // time's up mid-stack → he sees what she sent
+        else missedReply();
+      }
     }, 1000);
     updateCounter();
   }
-  function stopReplyClock() { clearInterval(replyInt); replyInt = null; updateCounter(); }
+  function stopReplyClock() { clearInterval(replyInt); replyInt = null; replyDeadline = null; updateCounter(); persist(); }
 
   function missedReply() {
     if (ended || answered) return;
     missed++;
     if (missed > S.MAX_MISSED) { failedChat(); return; }    // too many missed → FAILED right away
     history.push({ role: "her", text: "(no reply — she took too long)", missed: true });
+    persist();
     addBubble("sys", `⏰ Missed — no reply in ${S.REPLY_SECS}s (${missed} missed)`);
     pendingSince = Date.now();
     if (!busy) hisTurn();
   }
 
-  function failedChat() {
-    ended = true;
+  function failedChat(fromRestore) {
+    ended = true; failed = true; persist();
     stopReplyClock(); clearTimeout(stackTimer); typing(false); seen(false); clearReply(); updateCounter();
     const d = addBubble("err", `❌ FAILED — you missed ${missed} of ${S.REPLIES} replies (max ${S.MAX_MISSED}). Reply within ${S.REPLY_SECS} seconds next time 💪`);
     const b = document.createElement("button"); b.type = "button"; b.textContent = "New chat";
-    b.onclick = () => show("startView");
+    b.onclick = () => { clearSaved(); show("startView"); };
     d.appendChild(document.createElement("br")); d.appendChild(b);
-    saveResult({ overall: 0, gfe: "FAILED", summary: `Missed ${missed} of ${S.REPLIES} replies (over the limit of ${S.MAX_MISSED}).`, tip: `Reply within ${S.REPLY_SECS} seconds every time.`, banned: allBanned() });
+    if (!fromRestore) saveResult({ overall: 0, gfe: "FAILED", summary: `Missed ${missed} of ${S.REPLIES} replies (over the limit of ${S.MAX_MISSED}).`, tip: `Reply within ${S.REPLY_SECS} seconds every time.`, banned: allBanned() });
   }
 
   // ---------- his turn ----------
@@ -491,6 +555,7 @@ HOW TO TEXT
       typing(false); seen(false);
       history.push({ role: "him", text: parts[i] });
       addBubble("him", parts[i]);
+      persist();
       if (i < parts.length - 1) { typing(true); }
     }
     typing(false);
@@ -507,6 +572,14 @@ HOW TO TEXT
     }
   }
 
+  function fillHeader() {
+    $("avatar").textContent = persona.name[0];
+    $("hisName").textContent = `${persona.name}, ${persona.age}`;
+    const nb = $("notesBar"); nb.textContent = "📝 What you know so far: ";
+    const b1 = document.createElement("b"); b1.textContent = persona.job; nb.append(b1, " · into ");
+    const b2 = document.createElement("b"); b2.textContent = persona.knownHobby; nb.append(b2);
+  }
+
   // ---------- start ----------
   $("startBtn").onclick = () => {
     chatter = $("chatterName").value.trim();
@@ -514,14 +587,10 @@ HOW TO TEXT
     try { localStorage.setItem("gfe_name", chatter); } catch (e) {}
     persona = makePersona();
     history = []; turns = 0; ended = false; busy = false; pendingSince = null; lastReport = null;
-    herLines = 0; replies = 0; lastHerIdx = -1; missed = 0; answered = false; startedAt = Date.now(); stopReplyClock();
+    herLines = 0; replies = 0; lastHerIdx = -1; missed = 0; answered = false; failed = false; startedAt = Date.now(); stopReplyClock();
     clearTimeout(stackTimer); clearReply();
     $("msgs").innerHTML = ""; $("input").value = ""; checkInput();
-    $("avatar").textContent = persona.name[0];
-    $("hisName").textContent = `${persona.name}, ${persona.age}`;
-    const nb = $("notesBar"); nb.textContent = "📝 What you know so far: ";
-    const b1 = document.createElement("b"); b1.textContent = persona.job; nb.append(b1, " · into ");
-    const b2 = document.createElement("b"); b2.textContent = persona.knownHobby; nb.append(b2);
+    fillHeader();
     addBubble("sys", "You've been talking for a week. " + persona.scenario);
     updateCounter();
     show("chatView");
@@ -539,7 +608,8 @@ HOW TO TEXT
     if (replyTo) msg.replyTo = replyTo;
     history.push(msg);
     herLines++;
-    if (!answered) { answered = true; stopReplyClock(); }   // replied in time
+    if (!answered) { answered = true; updateCounter(); }   // clock keeps running until he sees it
+    persist();
     addBubble("her", t, { quote: replyTo ? `${persona.name}: ${replyTo}` : null, banned });
     if ($("typingDots")) typing(true);
     $("input").value = ""; autosize(); checkInput(); clearReply();
@@ -619,6 +689,7 @@ Reply ONLY with JSON in this exact shape:
     if (!ended && missed > S.MAX_MISSED) { failedChat(); return; }
     ended = true;
     stopReplyClock();
+    persist();
     clearTimeout(stackTimer); typing(false); seen(false); clearReply();
     updateCounter();
     addBubble("sys", "Chat ended — getting your score…");
@@ -633,6 +704,7 @@ Reply ONLY with JSON in this exact shape:
       const r = JSON.parse(raw.replace(/^```(json)?|```$/g, "").trim());
       r.banned = allBanned();
       lastReport = r;
+      persist();
       renderReport(r);
       saveResult(r);
     } catch (e) {
@@ -732,7 +804,7 @@ Reply ONLY with JSON in this exact shape:
       a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     };
     const again = el("button", "btn", "New chat");
-    again.onclick = () => show("startView");
+    again.onclick = () => { clearSaved(); show("startView"); };
     actions.append(copy, dl, again);
     body.appendChild(actions);
 
@@ -774,6 +846,9 @@ Reply ONLY with JSON in this exact shape:
     L.push("", "FOCUS: " + (r.tip || ""), "", "TRANSCRIPT", transcriptText());
     return L.join("\n");
   }
+
+  // Pick up a chat in progress after a refresh.
+  setTimeout(() => { try { restore(); } catch (e) { clearSaved(); } }, 0);
 
   function show(id) {
     ["startView", "chatView", "reportView"].forEach(v => $(v).classList.toggle("hidden", v !== id));
