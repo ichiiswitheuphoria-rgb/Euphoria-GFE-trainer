@@ -674,10 +674,11 @@ Rules:
 - "discovered" = things about him she got him to talk about. "missed" = ONLY things he actually hinted at in the chat that she didn't ask about. If he never brought something up, don't list it.
 - "gfe" = "yes" if she generally showed interest in his life and followed up on what he shared at least a couple of times. Otherwise "no".
 - Keep comments short and plain (under 20 words). Talk like a friendly coach.
+- Scores are used for a ranking, so be precise: "overall" has ONE decimal (e.g. 81.4, 76.8 — not a round number), and each skill score has one decimal from 1.0 to 5.0 (e.g. 3.7). Two chats are almost never exactly equal.
 
 Reply ONLY with JSON in this exact shape:
-{"overall": <0-100>, "gfe": "yes"|"no", "summary": "<2 sentences>",
- "skills": [{"name": "<skill name>", "score": <1-5>, "comment": "<short>"}],
+{"overall": <0.0-100.0>, "gfe": "yes"|"no", "summary": "<2 sentences>",
+ "skills": [{"name": "<skill name>", "score": <1.0-5.0>, "comment": "<short>"}],
  "best": [{"line": "<her exact line>", "why": "<short>"}],
  "improve": [{"his": "<what he said before>", "hers": "<her exact line>", "better": "<better version>", "why": "<short>"}],
  "discovered": ["<short>"], "missed": ["<short>"],
@@ -703,6 +704,7 @@ Reply ONLY with JSON in this exact shape:
       const raw = await ai(judgePrompt(), [{ role: "user", text: "Here is the chat:\n\n" + transcriptText() }], true, 0.3);
       const r = JSON.parse(raw.replace(/^```(json)?|```$/g, "").trim());
       r.banned = allBanned();
+      r.overall = finalScore(r);
       lastReport = r;
       persist();
       renderReport(r);
@@ -724,6 +726,18 @@ Reply ONLY with JSON in this exact shape:
     }
   }
 
+  // Final score with 2 decimals (for the ranking):
+  // 70% the AI's overall grade + 30% the average skill grade, minus 2 per missed reply and 1 per banned word.
+  function finalScore(r) {
+    const ai = Math.max(0, Math.min(100, Number(r.overall) || 0));
+    const sk = (r.skills || []).map(s => Number(s.score)).filter(n => n > 0);
+    const skPct = sk.length ? (sk.reduce((a, b) => a + b, 0) / sk.length) / 5 * 100 : ai;
+    r.aiScore = ai;
+    const v = 0.7 * ai + 0.3 * skPct - 2 * missed - 1 * (r.banned || []).length;
+    return Math.round(Math.max(0, Math.min(100, v)) * 100) / 100;
+  }
+  function fmt(n) { return (Number(n) || 0).toFixed(2); }
+
   function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
   function color(score, max) { const r = score / max; return r >= .75 ? "var(--good)" : r >= .5 ? "var(--warn)" : "var(--bad)"; }
 
@@ -735,7 +749,7 @@ Reply ONLY with JSON in this exact shape:
     const head = el("div", "card scorehead");
     const ring = el("div", "ring");
     ring.style.background = `conic-gradient(${color(overall, 100)} ${overall * 3.6}deg, var(--panel2) 0)`;
-    const inner = el("div", null, overall); inner.style.cssText = "width:74px;height:74px;border-radius:50%;background:#fff;display:grid;place-items:center";
+    const inner = el("div", null, fmt(overall)); inner.style.cssText = "width:74px;height:74px;border-radius:50%;background:#fff;display:grid;place-items:center;font-size:20px";
     ring.appendChild(inner);
     const hv = el("div");
     hv.append(el("div", "verdict " + (r.gfe === "yes" ? "yes" : "no"), r.gfe === "yes" ? "Yes GFE ✅" : "No GFE ❌"),
@@ -822,7 +836,7 @@ Reply ONLY with JSON in this exact shape:
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({ action: "save", result: {
-          chatter, score: r.overall, gfe: r.gfe, guy: `${persona.name}, ${persona.age} (${persona.job})`,
+          chatter, score: r.overall, gfe: r.gfe, missed, guy: `${persona.name}, ${persona.age} (${persona.job})`,
           messages: herLines, minutes: Math.round((Date.now() - startedAt) / 6000) / 10,
           banned: (r.banned || []).join(", "), summary: (missed ? `[${missed} missed replies] ` : "") + (r.summary || ""), tip: r.tip, transcript: transcriptText(),
         } }),
@@ -836,7 +850,7 @@ Reply ONLY with JSON in this exact shape:
     const r = lastReport, L = [];
     L.push(`GFE TRAINER REPORT — ${chatter} — ${new Date().toLocaleString()}`);
     L.push(`Guy: ${persona.name}, ${persona.age} (${persona.job})`);
-    L.push(`Score: ${r.overall}/100 · ${r.gfe === "yes" ? "YES GFE" : "NO GFE"}`);
+    L.push(`Score: ${fmt(r.overall)}/100 ·${r.gfe === "yes" ? "YES GFE" : "NO GFE"}`);
     L.push(r.summary || "", "");
     (r.skills || []).forEach(s => L.push(`${s.name}: ${s.score}/5 — ${s.comment}`));
     if ((r.best || []).length) { L.push("", "BEST LINES"); r.best.forEach(b => L.push(`• "${b.line}" — ${b.why}`)); }
