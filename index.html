@@ -689,6 +689,7 @@ Rules:
 - "discovered" = things about him she got him to talk about. "missed" = ONLY things he actually hinted at in the chat that she didn't ask about. If he never brought something up, don't list it.
 - "gfe" = "yes" if she generally showed interest in his life and followed up on what he shared at least a couple of times. Otherwise "no".
 - Keep comments short and plain (under 20 words). Talk like a friendly coach.
+- Keep the whole report compact: "best" = at most 2 lines, "improve" = at most 3, "discovered" and "missed" = at most 5 short items each. Quoted lines can be shortened with "…" if long.
 - Scores are used for a ranking, so be precise: "overall" has ONE decimal (e.g. 81.4, 76.8 — not a round number), and each skill score has one decimal from 1.0 to 5.0 (e.g. 3.7). Two chats are almost never exactly equal.
 
 Reply ONLY with JSON in this exact shape:
@@ -716,8 +717,14 @@ Reply ONLY with JSON in this exact shape:
     $("reportBody").classList.add("hidden");
     try {
       await sleep(rand(0, 4000)); // when a whole batch ends together, spread out the scoring requests
-      const raw = await ai(judgePrompt(), [{ role: "user", text: "Here is the chat:\n\n" + transcriptText() }], true, 0.3);
-      const r = JSON.parse(raw.replace(/^```(json)?|```$/g, "").trim());
+      let r = null, lastErr = null;
+      for (let tries = 0; tries < 3 && !r; tries++) {         // a cut-off or messy report → quietly ask again
+        try {
+          const raw = await ai(judgePrompt(), [{ role: "user", text: "Here is the chat:\n\n" + transcriptText() }], true, 0.3);
+          r = parseReport(raw);
+        } catch (e) { if (e.limit) throw e; lastErr = e; await sleep(1500); }
+      }
+      if (!r) throw lastErr || new Error("the AI's report was incomplete");
       r.banned = allBanned();
       r.overall = finalScore(r);
       lastReport = r;
@@ -739,6 +746,16 @@ Reply ONLY with JSON in this exact shape:
       b.onclick = () => { lastReport = null; finish(); };
       $("reportLoading").append(p, b);
     }
+  }
+
+  // Reads the AI's JSON report even if it added text or code fences around it.
+  function parseReport(raw) {
+    let t = String(raw || "").replace(/```(json)?/gi, "").trim();
+    const a = t.indexOf("{"), b = t.lastIndexOf("}");
+    if (a < 0 || b <= a) throw new Error("the AI's report was incomplete");
+    const r = JSON.parse(t.slice(a, b + 1));
+    if (r.overall == null || !Array.isArray(r.skills)) throw new Error("the AI's report was incomplete");
+    return r;
   }
 
   // Final score with 2 decimals (for the ranking):
